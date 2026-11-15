@@ -1,0 +1,10 @@
+{
+  "alice": {
+    "pwd": "$2b$12$d6j3OlhOBw.et77j.7saM..Vi5Qx8uaR/dV3OXr8lOhI8zuTglnwe",
+    "role": "user"
+  },
+  "admin": {
+    "pwd": "$2b$12$g5pX.qz0NVoGL8cLoyRWNe1prB7aSD8yYsvMA9VQnt3JCBTRJ8N0W",
+    "role": "admin"
+  }
+}

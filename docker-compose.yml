@@ -1,0 +1,38 @@
+# Два вузли в окремій мережі: сервер 172.28.0.10 і клієнт 172.28.0.20
+services:
+  server:
+    build: .
+    image: secure-net-app
+    hostname: server
+    init: true
+    command: sh server/start.sh
+    env_file: .env
+    volumes:
+      - ./server:/app/server
+    networks:
+      lab:
+        ipv4_address: 172.28.0.10
+
+  client:
+    build: .
+    image: secure-net-app
+    hostname: client
+    init: true
+    command: sleep infinity
+    environment:
+      SERVER_HOST: server
+    volumes:
+      - ./client:/app/client
+      - ./server/certs/ca.crt:/app/server/certs/ca.crt:ro
+    networks:
+      lab:
+        ipv4_address: 172.28.0.20
+    depends_on:
+      - server
+
+networks:
+  lab:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/24

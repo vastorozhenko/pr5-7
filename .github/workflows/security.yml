@@ -1,0 +1,90 @@
+name: security
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'server/**'
+      - 'client/**'
+      - 'tools/**'
+      - 'requirements.txt'
+      - 'Dockerfile'
+      - '.github/workflows/security.yml'
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install tools
+        run: pip install bandit pip-audit -r requirements.txt
+
+      - name: Bandit (SAST)
+        id: bandit
+        continue-on-error: true
+        run: |
+          bandit -r server client tools -f json -o bandit.json || BANDIT_RC=$?
+          bandit -r server client tools -f txt -o bandit.txt || true
+          exit ${BANDIT_RC:-0}
+
+      - name: pip-audit (dependencies)
+        id: audit
+        continue-on-error: true
+        run: pip-audit -r requirements.txt -f json -o pip-audit.json
+
+      - name: Smoke test (TLS, login, JWT, rate limit)
+        id: smoke
+        continue-on-error: true
+        run: |
+          bash server/scripts/gencerts.sh
+          export JWT_SECRET=$(openssl rand -hex 32)
+          sh server/start.sh > server.log 2>&1 &
+          sleep 5
+          python client/client.py --host localhost tls-info --ca server/certs/ca.crt
+          T=$(python client/client.py --host localhost login --user alice --password secret --ca server/certs/ca.crt)
+          python client/client.py --host localhost whoami --token "$T" --ca server/certs/ca.crt | grep '^200'
+          python client/client.py --host localhost admin --token "$T" --ca server/certs/ca.crt | grep '^403'
+          python client/client.py --host localhost brute --user alice --wrong 10 --ca server/certs/ca.crt | grep ' 429 '
+
+      - name: Report
+        if: always()
+        run: |
+          python - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import json
+          b = json.load(open('bandit.json'))
+          a = json.load(open('pip-audit.json'))
+          vulns = [(d['name'], d['version'], v['id']) for d in a['dependencies'] for v in d.get('vulns', [])]
+          print('## Security checks')
+          print('| Check | Result |')
+          print('|---|---|')
+          print(f"| Bandit (SAST) | {len(b['results'])} issues in {b['metrics']['_totals']['loc']} lines |")
+          print(f"| pip-audit | {len(vulns)} vulnerabilities in {len(a['dependencies'])} packages |")
+          print(f"| Smoke test | ${{ steps.smoke.outcome }} |")
+          for r in b['results']:
+              print(f"- {r['test_id']} {r['issue_severity']}: {r['filename']}:{r['line_number']} {r['issue_text']}")
+          for n, v, i in vulns:
+              print(f'- {n} {v}: {i}')
+          PY
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: security-reports
+          path: |
+            bandit.json
+            bandit.txt
+            pip-audit.json
+
+      - name: Fail if any check failed
+        if: steps.bandit.outcome == 'failure' || steps.audit.outcome == 'failure' || steps.smoke.outcome == 'failure'
+        run: exit 1
